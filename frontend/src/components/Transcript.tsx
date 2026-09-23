@@ -9,7 +9,8 @@ interface Props {
 }
 
 export function Transcript({ meeting, highlightedId, hasAudio, onPlay }: Props) {
-  function speakerName(label: string): string {
+  function speakerName(label: string | null): string {
+    if (!label) return "Не определён";
     const mapping = meeting.speakers.find((speaker) => speaker.label === label);
     return meeting.participants.find((person) => person.id === mapping?.participant_id)?.name || label;
   }

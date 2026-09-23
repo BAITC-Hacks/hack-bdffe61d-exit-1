@@ -16,7 +16,7 @@ export interface SpeakerMapping {
 
 export interface TranscriptSegment {
   id: string;
-  speaker: string;
+  speaker: string | null;
   start_ms: number;
   end_ms: number;
   text: string;

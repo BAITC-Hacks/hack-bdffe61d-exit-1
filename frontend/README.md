@@ -1,39 +1,90 @@
-# AlemProtocol frontend
+# AlemProtocol frontend — подключён к бэкенду
 
-React, TypeScript и Vite интерфейс для загрузки записи совещания и просмотра протокола.
+React + TypeScript + Vite. Полная инструкция по трём сервисам: `../CONNECT_TWO_LAPTOPS.md`.
+Используйте обновлённый бэкенд из архива `hack-bdffe61d-exit-1-backend-connected.zip`.
 
-## Запуск
+## Быстрый запуск (PowerShell)
+
+Нужен Node.js, совместимый с Vite в package-lock.json; сборка проверена на Node.js 24.
+Из папки `frontend`:
 
 ```powershell
-npm.cmd install
+npm.cmd ci
+Copy-Item .env.example .env
+```
+
+Если `.env` уже существует, отредактируйте его вместо перезаписи:
+
+```dotenv
+VITE_USE_MOCK=false
+VITE_API_BASE_URL=/api
+BACKEND_URL=http://127.0.0.1:8080
+VITE_MAX_UPLOAD_MB=200
+```
+
+`BACKEND_URL` — адрес бэкенда, доступный **ноутбуку, на котором запущен Vite**.
+Если фронтенд и бэкенд на разных устройствах, замените `127.0.0.1` на IPv4 ноутбука с бэкендом.
+В этой переменной нужен порт бэкенда **8080**, а не порт ИИ **8000**.
+`VITE_API_BASE_URL=/api` оставьте без изменений.
+
+```powershell
 npm.cmd run dev
 ```
 
-В `.env` по умолчанию включён `VITE_USE_MOCK=true`. Загрузка файла открывает `/meetings/demo`; результат берётся из `src/mocks/meeting.json`. Загруженный в форме файл доступен в аудиоплеере до перезагрузки вкладки. Прямой переход на `/meetings/demo` тоже работает, но без аудиофайла. В демо правки и подтверждение хранятся в состоянии React, а DOCX создаётся в браузере.
+На этом ноутбуке: `http://localhost:5173`. На другом: `http://IP_НОУТБУКА_С_ФРОНТОМ:5173`.
+Vite слушает все сетевые интерфейсы. Порт занят — запуск завершится ошибкой, не перескочит на другой порт.
+После правок `.env` перезапустите Vite. Уже заданные переменные окружения имеют приоритет над `.env`.
 
-Для подключения backend установите `VITE_USE_MOCK=false` и укажите `VITE_API_BASE_URL`, затем перезапустите Vite. Маршрут `/meetings/:id` загружает результат и повторяет `GET` каждые 2 секунды до `completed` или `failed`.
+Браузер обращается к `/api` на адресе страницы. Vite передаёт запросы в бэкенд,
+убирая префикс `/api`. В этой схеме отдельная настройка CORS бэкенда для каждого ноутбука не нужна.
+Токен ИИ остаётся на бэкенде; во фронтенд его добавлять не надо.
 
-## Backend-контракт
+Проверка связи через Vite: `http://localhost:5173/api/ready` должен вернуть `{"status":"ready"}`.
+Для обработки запустите API и worker бэкенда, а также ИИ-сервис.
 
-| Метод | Путь | Действие |
-| --- | --- | --- |
-| `POST` | `/meetings` | multipart: `file`, `title`, `started_at` (ISO), `timezone`, `participants_json` (JSON-массив); ответ `{ id, status }` |
-| `GET` | `/meetings` | список совещаний (`MeetingListResponse`) |
-| `GET` | `/meetings/{id}` | объект `Meeting` из `src/types/meeting.ts` |
-| `PATCH` | `/meetings/{id}/tasks/{task_id}` | JSON: `text: string`, `assignee_id: string \| null`, `due_date: string \| null` |
-| `PATCH` | `/meetings/{id}/speakers` | JSON: `{ "mappings": [{ "speaker": string, "participant_id": string \| null }] }` |
-| `POST` | `/meetings/{id}/confirm` | подтверждение протокола; после запроса frontend повторно получает `GET /meetings/{id}` |
-| `GET` | `/meetings/{id}/audio` | аудиофайл (`Blob`) |
-| `GET` | `/meetings/{id}/export?format=docx` | DOCX-файл |
+## Возможности
 
-Все пути собираются от `VITE_API_BASE_URL`. При разных origin backend должен разрешать CORS для адреса Vite. Для завершённого реального совещания интерфейс использует загруженный пользователем файл или `audio_url` из ответа. Если их нет, он получает аудио через `GET /meetings/{id}/audio` и освобождает временный object URL при уходе со страницы. Ошибка загрузки аудио не мешает просмотру протокола.
+- Загрузка WAV/MP3/M4A с датой и участниками; лимит размера должен совпадать с `MAX_UPLOAD_MB` бэкенда.
+- Опрос статуса каждые 2 секунды до `completed` или `failed`.
+- Транскрипт, поручения и переход к исходной реплике.
+- Аудио с бэкенда, в том числе после перезагрузки страницы.
+- Сохранение поручений, сопоставление спикеров, подтверждение и скачивание DOCX.
 
-## Проверка
+По умолчанию используется настоящий бэкенд. Для отдельного демонстрационного режима выставьте
+`VITE_USE_MOCK=true` и перезапустите Vite. `/meetings/demo` — специальная страница демонстрационных данных.
+Для реальной обработки нужны одновременно: фронт `VITE_USE_MOCK=false`, бэкенд `AI_MODE=http`, ИИ `AI_MODE=real`.
+
+## Проверки
 
 ```powershell
 npm.cmd run build
 npm.cmd run lint
-npm.cmd run smoke
 ```
 
-`smoke` запускает установленный Microsoft Edge в headless-режиме. Он проверяет demo-сценарий, мобильную ширину 375 px, фокус клавиатуры и ответы API через локальную подмену запросов. Для теста `POST` запустите второй Vite-сервер с `VITE_USE_MOCK=false` и передайте его адрес в `REAL_TEST_URL`.
+`npm.cmd run test:connected` проверяет все сервисы через браузер без подмены HTTP:
+создаёт тестовое совещание, проверяет аудио после перезагрузки, правку, подтверждение и DOCX.
+Для этого сценария запустите фронт в обычном режиме, бэкенд и worker, а ИИ — с `AI_MODE=mock`.
+Скрипт использует синтетический WAV и создаёт запись в вашей базе.
+В Windows используется установленный Microsoft Edge; другой браузер можно указать переменной `BROWSER_PATH`.
+В Linux: `npx playwright-core install chromium --only-shell` или `BROWSER_PATH` к установленному Chromium.
+Адрес страницы можно задать через `TEST_URL` (по умолчанию `http://127.0.0.1:5173`).
+
+`npm.cmd run smoke` — существующие проверки UI с подменёнными API-ответами.
+Они ожидают сервер с `VITE_USE_MOCK=true` по адресу `TEST_URL`.
+Для дополнительной проверки загрузки укажите `REAL_TEST_URL` второго Vite-сервера с `VITE_USE_MOCK=false`.
+`TEST_API_BASE` по умолчанию `/api`. Это отдельные проверки UI, не доказательство работы реального ИИ.
+
+## Сборка и размещение
+
+```powershell
+npm.cmd run build
+npm.cmd run preview
+```
+
+Для локального просмотра сборки используется порт 4173 и тот же прокси `BACKEND_URL`.
+Настройки `VITE_*` фиксируются при сборке: при их изменении пересоберите проект.
+Для размещения `dist` на другом веб-сервере настройте там `/api` → бэкенд и fallback на `index.html`
+для `/meetings/:id`. Vite dev/preview предназначены для разработки и проверки.
+Если вместо прокси задаёте прямой адрес API, настройте `FRONTEND_ORIGIN` бэкенда под точный origin страницы.
+
+Механизм прокси и сетевой адрес сервера: [документация Vite](https://vite.dev/config/server-options#server-proxy).

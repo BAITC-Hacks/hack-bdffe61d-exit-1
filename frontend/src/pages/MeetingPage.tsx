@@ -97,15 +97,10 @@ export function MeetingPage() {
 
   async function saveItem(item: ActionItem) {
     if (!meeting) return;
-    const previous = meeting.action_items.find((current) => current.id === item.id);
-    const updated = { ...item, needs_review: !item.assignee_id || !item.due_date, review_reason: item.assignee_id && item.due_date ? null : item.review_reason };
-    setMeeting((current) => current && ({ ...current, action_items: current.action_items.map((entry) => entry.id === item.id ? updated : entry) }));
-    if (isDemo) return;
-    try { await updateActionItem(id, updated); }
-    catch (cause) {
-      if (previous) setMeeting((current) => current && ({ ...current, action_items: current.action_items.map((entry) => entry.id === item.id ? previous : entry) }));
-      throw cause;
-    }
+    const updated = isDemo
+      ? { ...item, needs_review: !item.assignee_id || !item.due_date, review_reason: item.assignee_id && item.due_date ? null : item.review_reason }
+      : await updateActionItem(id, item);
+    setMeeting((current) => current && ({ ...current, confirmed_at: null, action_items: current.action_items.map((entry) => entry.id === item.id ? updated : entry) }));
   }
 
   async function changeSpeaker(speaker: SpeakerMapping, participantId: string) {

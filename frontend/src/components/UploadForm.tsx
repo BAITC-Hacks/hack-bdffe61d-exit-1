@@ -7,9 +7,13 @@ interface ParticipantDraft {
   name: string;
 }
 
+// These IDs are React keys only; backend assigns persistent participant UUIDs.
+// A counter also works on plain HTTP LAN origins where randomUUID is unavailable.
+let nextParticipantId = 0;
+
 function createParticipant(): ParticipantDraft {
   return {
-    id: crypto.randomUUID(),
+    id: `participant-${++nextParticipantId}`,
     name: "",
   };
 }
@@ -19,9 +23,11 @@ export function UploadForm() {
   const isMockMode = import.meta.env.VITE_USE_MOCK === "true";
   const [title, setTitle] = useState("");
   const [startedAt, setStartedAt] = useState("");
-  const [participants, setParticipants] = useState<ParticipantDraft[]>([
+  const [participants, setParticipants] = useState<ParticipantDraft[]>(() => [
     createParticipant(),
   ]);
+  const configuredLimit = Number(import.meta.env.VITE_MAX_UPLOAD_MB || 200);
+  const maxUploadMb = Number.isFinite(configuredLimit) && configuredLimit > 0 ? configuredLimit : 200;
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -43,21 +49,33 @@ export function UploadForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) { setError("Выберите аудиофайл."); return; }
+    if (!/\.(wav|mp3|m4a)$/i.test(file.name)) {
+      setError("Выберите запись в формате WAV, MP3 или M4A."); return;
+    }
+    if (file.size === 0 || file.size > maxUploadMb * 1024 * 1024) {
+      setError(`Файл должен быть непустым и не больше ${maxUploadMb} МБ.`); return;
+    }
+    if (!title.trim() || participants.some(({ name }) => !name.trim())) {
+      setError("Заполните название и имена участников."); return;
+    }
+    const startedDate = new Date(startedAt);
+    if (Number.isNaN(startedDate.getTime())) {
+      setError("Укажите дату и время совещания."); return;
+    }
     setSubmitting(true);
     setError("");
     try {
-      const audioUrl = URL.createObjectURL(file);
-      if (isMockMode) { navigate("/meetings/demo", { state: { audioUrl } }); return; }
-      try {
-        const result = await createMeeting({
-          title: title.trim(),
-          started_at: new Date(startedAt).toISOString(),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          participants: participants.map(({ name }) => ({ name: name.trim() })),
-          file,
-        });
-        navigate(`/meetings/${encodeURIComponent(result.id)}`, { state: { audioUrl } });
-      } catch (cause) { URL.revokeObjectURL(audioUrl); throw cause; }
+      if (isMockMode) {
+        navigate("/meetings/demo", { state: { audioUrl: URL.createObjectURL(file) } }); return;
+      }
+      const result = await createMeeting({
+        title: title.trim(),
+        started_at: startedDate.toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        participants: participants.map(({ name }) => ({ name: name.trim() })),
+        file,
+      });
+      navigate(`/meetings/${encodeURIComponent(result.id)}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось загрузить запись.");
       setSubmitting(false);
@@ -71,6 +89,7 @@ export function UploadForm() {
         <input
           type="text"
           value={title}
+          maxLength={255}
           onChange={(event) => setTitle(event.target.value)}
           required
         />
@@ -96,6 +115,7 @@ export function UploadForm() {
               <input
                 type="text"
                 value={participant.name}
+                maxLength={255}
                 onChange={(event) =>
                   updateParticipant(participant.id, event.target.value)
                 }
@@ -116,6 +136,7 @@ export function UploadForm() {
 
         <button
           type="button"
+          disabled={participants.length >= 200}
           onClick={() =>
             setParticipants((current) => [...current, createParticipant()])
           }
@@ -128,11 +149,13 @@ export function UploadForm() {
         Запись совещания
         <input
           type="file"
-          accept="audio/*"
+          accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4"
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           required
         />
       </label>
+
+      <p className="muted">WAV, MP3 или M4A, до {maxUploadMb} МБ.</p>
 
       {error && <p role="alert" className="form-error">{error}</p>}
       <button type="submit" className="primary-button" disabled={submitting}>{submitting ? "Загружаем…" : "Обработать совещание"}</button>

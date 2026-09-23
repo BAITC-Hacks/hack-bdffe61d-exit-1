@@ -3,7 +3,13 @@ import type { ActionItem, CreateMeetingResponse, Meeting, MeetingListResponse, S
 const baseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
 async function fetchChecked(path: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(`${baseUrl}${path}`, init);
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, init);
+  } catch (cause) {
+    if (init?.signal?.aborted) throw cause;
+    throw new Error("Не удалось связаться с сервером. Проверьте подключение и повторите попытку.");
+  }
   if (!response.ok) {
     let detail = "";
     try {
@@ -55,8 +61,8 @@ export function getMeeting(id: string, signal?: AbortSignal): Promise<Meeting> {
   return request<Meeting>(`/meetings/${encodeURIComponent(id)}`, { signal });
 }
 
-export function updateActionItem(meetingId: string, item: ActionItem): Promise<unknown> {
-  return jsonPatch<unknown>(
+export function updateActionItem(meetingId: string, item: ActionItem): Promise<ActionItem> {
+  return jsonPatch<ActionItem>(
     `/meetings/${encodeURIComponent(meetingId)}/tasks/${encodeURIComponent(item.id)}`,
     { text: item.text, assignee_id: item.assignee_id, due_date: item.due_date },
   );

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "smoke": "node tests/smoke.mjs",
+    "test:connected": "node tests/connected.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -4,9 +4,14 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 
 const base = process.env.TEST_URL || "http://127.0.0.1:5173";
+const apiBase = new URL(process.env.TEST_API_BASE || "/api", base).href.replace(/\/$/, "");
+const realApiBase = new URL(process.env.TEST_API_BASE || "/api", process.env.REAL_TEST_URL || base).href.replace(/\/$/, "");
+const executablePath = process.env.BROWSER_PATH || process.env.EDGE_PATH;
 const browser = await chromium.launch({
-  executablePath: process.env.EDGE_PATH || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  executablePath,
+  channel: !executablePath && process.platform === "win32" ? "msedge" : undefined,
   headless: true,
+  args: ["--no-proxy-server", ...(process.env.TEST_HOST_RULES ? [`--host-resolver-rules=${process.env.TEST_HOST_RULES}`] : [])],
 });
 const errors = [];
 
@@ -87,14 +92,14 @@ try {
   let audioRequests = 0;
   let confirmed = false;
   const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, PATCH, OPTIONS", "access-control-allow-headers": "content-type" };
-  await real.route("http://localhost:8000/meetings/real-1/**", async (route) => {
+  await real.route(`${apiBase}/meetings/real-1/**`, async (route) => {
     const request = route.request();
     if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (request.url().endsWith("/tasks/a1")) {
       assert.equal(request.method(), "PATCH");
       assert.deepEqual(JSON.parse(request.postData()), { text: "Реальное поручение", assignee_id: "p2", due_date: "2026-09-30" });
       itemPatches++;
-      return route.fulfill({ status: 204, headers: cors });
+      return route.fulfill({ json: { ...fixture.action_items.find((item) => item.id === "a1"), ...JSON.parse(request.postData()) }, headers: cors });
     }
     if (request.url().endsWith("/speakers")) {
       assert.equal(request.method(), "PATCH");
@@ -119,12 +124,12 @@ try {
     }
     throw new Error(`Unexpected API request: ${request.url()}`);
   });
-  await real.route("http://localhost:8000/meetings/real-1", async (route) => {
+  await real.route(`${apiBase}/meetings/real-1`, async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const status = ["queued", "queued", "running", "completed"][Math.min(polls++, 3)];
     await route.fulfill({ json: { ...fixture, id: "real-1", status, confirmed_at: confirmed ? new Date().toISOString() : null }, headers: cors });
   });
-  await real.route("http://localhost:8000/meetings", (route) => route.fulfill({ json: { items: [{ id: "real-1", title: fixture.title, started_at: fixture.started_at, status: "completed", confirmed_at: null }] }, headers: cors }));
+  await real.route(`${apiBase}/meetings`, (route) => route.fulfill({ json: { items: [{ id: "real-1", title: fixture.title, started_at: fixture.started_at, status: "completed", confirmed_at: null }] }, headers: cors }));
   await real.goto(`${base}/meetings/real-1`);
   await real.getByText("В очереди").waitFor();
   await real.getByText("Обрабатывается").waitFor({ timeout: 5000 });
@@ -155,17 +160,17 @@ try {
   assert.deepEqual([itemPatches, speakerPatches, confirms, exports], [1, 1, 1, 1]);
   await real.getByRole("link", { name: "Новое совещание" }).click();
   await real.waitForURL(`${base}/`);
-  assert.equal(await real.evaluate(async (url) => fetch(url).then(() => true).catch(() => false), backendAudioUrl), false);
+  await real.waitForFunction(async (url) => fetch(url).then(() => false).catch(() => true), backendAudioUrl);
 
   const unavailable = await browser.newPage();
   unavailable.on("pageerror", (error) => errors.push(error.message));
   let failedAudioRequests = 0;
-  await unavailable.route("http://localhost:8000/meetings/unavailable/audio", (route) => {
+  await unavailable.route(`${apiBase}/meetings/unavailable/audio`, (route) => {
     failedAudioRequests++;
     return route.fulfill({ status: 503, headers: cors });
   });
-  await unavailable.route("http://localhost:8000/meetings/unavailable", (route) => route.fulfill({ json: { ...fixture, id: "unavailable" }, headers: cors }));
-  const failedAudioRequest = unavailable.waitForRequest("http://localhost:8000/meetings/unavailable/audio");
+  await unavailable.route(`${apiBase}/meetings/unavailable`, (route) => route.fulfill({ json: { ...fixture, id: "unavailable" }, headers: cors }));
+  const failedAudioRequest = unavailable.waitForRequest(`${apiBase}/meetings/unavailable/audio`);
   await unavailable.goto(`${base}/meetings/unavailable`);
   await failedAudioRequest;
   await unavailable.getByRole("heading", { name: /Поручения/ }).waitFor();
@@ -175,28 +180,28 @@ try {
 
   const provided = await browser.newPage();
   let skippedAudioRequests = 0;
-  await provided.route("http://localhost:8000/meetings/provided/audio", (route) => {
+  await provided.route(`${apiBase}/meetings/provided/audio`, (route) => {
     skippedAudioRequests++;
     return route.fulfill({ body: wavFile(), headers: cors });
   });
-  await provided.route("http://localhost:8000/meetings/provided", (route) => route.fulfill({ json: { ...fixture, id: "provided", audio_url: `data:audio/wav;base64,${wavFile().toString("base64")}` }, headers: cors }));
+  await provided.route(`${apiBase}/meetings/provided`, (route) => route.fulfill({ json: { ...fixture, id: "provided", audio_url: `data:audio/wav;base64,${wavFile().toString("base64")}` }, headers: cors }));
   await provided.goto(`${base}/meetings/provided`);
   await provided.locator("audio").waitFor();
   assert.equal((await provided.locator("audio").getAttribute("src")).startsWith("data:audio/wav"), true);
   assert.equal(skippedAudioRequests, 0);
 
   const failed = await browser.newPage();
-  await failed.route("http://localhost:8000/meetings/failed", (route) => route.fulfill({ json: { ...fixture, status: "failed", error: "Ошибка распознавания" }, headers: { "access-control-allow-origin": "*" } }));
+  await failed.route(`${apiBase}/meetings/failed`, (route) => route.fulfill({ json: { ...fixture, status: "failed", error: "Ошибка распознавания" }, headers: { "access-control-allow-origin": "*" } }));
   await failed.goto(`${base}/meetings/failed`);
   await failed.getByText("Ошибка распознавания").waitFor();
 
   const empty = await browser.newPage();
-  await empty.route("http://localhost:8000/meetings/empty", (route) => route.fulfill({ json: { ...fixture, action_items: [], segments: [], participants: [], speakers: [] }, headers: { "access-control-allow-origin": "*" } }));
+  await empty.route(`${apiBase}/meetings/empty`, (route) => route.fulfill({ json: { ...fixture, action_items: [], segments: [], participants: [], speakers: [] }, headers: { "access-control-allow-origin": "*" } }));
   await empty.goto(`${base}/meetings/empty`);
   await empty.getByText("Поручения не обнаружены.").waitFor();
   const retry = await browser.newPage();
   let attempts = 0;
-  await retry.route("http://localhost:8000/meetings/retry", (route) => {
+  await retry.route(`${apiBase}/meetings/retry`, (route) => {
     attempts++;
     return attempts <= 2
       ? route.fulfill({ status: 503, headers: cors })
@@ -211,7 +216,7 @@ try {
     upload.on("pageerror", (error) => errors.push(error.message));
     let creates = 0;
     let uploadedAudioRequests = 0;
-    await upload.route("http://localhost:8000/meetings", async (route) => {
+    await upload.route(`${realApiBase}/meetings`, async (route) => {
       assert.equal(route.request().method(), "POST");
       const payload = route.request().postData() || "";
       assert.equal(payload.includes("Проверка POST"), true);
@@ -221,8 +226,8 @@ try {
       creates++;
       await route.fulfill({ json: { id: "upload-1", status: "queued" }, headers: cors });
     });
-    await upload.route("http://localhost:8000/meetings/upload-1", (route) => route.fulfill({ json: { ...fixture, id: "upload-1" }, headers: cors }));
-    await upload.route("http://localhost:8000/meetings/upload-1/audio", (route) => {
+    await upload.route(`${realApiBase}/meetings/upload-1`, (route) => route.fulfill({ json: { ...fixture, id: "upload-1" }, headers: cors }));
+    await upload.route(`${realApiBase}/meetings/upload-1/audio`, (route) => {
       uploadedAudioRequests++;
       return route.fulfill({ body: wavFile(), headers: cors });
     });
@@ -235,8 +240,8 @@ try {
     await upload.waitForURL("**/meetings/upload-1");
     await upload.getByRole("heading", { name: fixture.title }).waitFor();
     assert.equal(creates, 1);
-    assert.equal((await upload.locator("audio").getAttribute("src")).startsWith("blob:"), true);
-    assert.equal(uploadedAudioRequests, 0);
+    await upload.waitForFunction(() => document.querySelector("audio")?.getAttribute("src")?.startsWith("blob:"));
+    assert.equal(uploadedAudioRequests >= 1, true);
   }
   assert.deepEqual(errors, []);
   console.log("Smoke: demo and real API flow, backend audio playback/failure/cleanup, upload, edit, source, confirmation, DOCX, 375px, focus, queued/running/completed/failed/empty passed.");

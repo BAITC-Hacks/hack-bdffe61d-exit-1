@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+!**/.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+node_modules/
+
+hack-bdffe61d-exit-1/
+test.py
